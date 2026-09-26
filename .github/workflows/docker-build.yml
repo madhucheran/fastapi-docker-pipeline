@@ -1,21 +1,29 @@
-name: Build Docker Image
+name: Build and Push Docker Image
 
-# 1. The Trigger: When should this run?
 on:
   push:
     branches:
       - main
 
 jobs:
-  build-container:
-    # 2. The Environment: What OS should the temporary cloud server use?
+  build-and-push:
     runs-on: ubuntu-latest
 
     steps:
-      # 3. The Code: Download your repository onto the temporary server
       - name: Check out repository code
         uses: actions/checkout@v4
 
-      # 4. The Action: Run your local Docker build command
+      # 1. Log in to docker hub using your stored secrets
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 2. Build the image and tag it with your Docker Hub username
       - name: Build the Docker image
-        run: docker build -t fastapi-cloud .
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest .
+
+      # 3. Push the image to the public registry
+      - name: Push the Docker image
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest
