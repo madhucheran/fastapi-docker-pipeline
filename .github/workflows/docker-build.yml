@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build, Push, and Deploy
 
 on:
   push:
@@ -6,24 +6,42 @@ on:
       - main
 
 jobs:
+  # Phase 1: Continuous Integration
   build-and-push:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository code
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      # 1. Log in to docker hub using your stored secrets
-      - name: Log-in to Docker Hub
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 2. Build the image and tag it with your Docker Hub username
-      - name: Build the Docker image
-        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest .
+      - name: Build and Push
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest
 
-      # 3. Push the image to the public registry
-      - name: Push the Docker image
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest
+  # Phase 2: Continuous Deployment (New Step)
+  deploy:
+    needs: build-and-push # Tells github to wait until Phase 1 finishes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute Remote SSH Commands
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # 1. pull the fresh image you just built
+            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest
+
+            # 2. Stop and remove the old container (if it exists)
+            sudo docker stop fastapi-container || true
+            sudo docker rm fastapi-container || true
+
+            # 3. Run the new container
+            sudo docker run -d --name fastapi-container -p 8000:8000 ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest
