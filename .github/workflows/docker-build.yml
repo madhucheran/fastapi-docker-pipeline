@@ -5,10 +5,18 @@ on:
     branches:
       - main
 
+concurrency:
+  group: fastapi-production-deployment
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   # Phase 1: Continuous Integration
   build-and-push:
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -19,35 +27,57 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and Push
+      - name: Build and Push Docker Image
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud"
+          IMAGE="$DOCKERHUB_USERNAME/fastapi-cloud"
+
           docker build \
             -t "$IMAGE:latest" \
             -t "$IMAGE:${GITHUB_SHA}" \
             .
-          #this will make 2 versions of the image, one with the latest tag and one with the commit SHA as a tag for versioning purposes. This is useful for rollbacks or tracking specific builds.
+
           docker push "$IMAGE:latest"
           docker push "$IMAGE:${GITHUB_SHA}"
 
-  # Phase 2: Continuous Deployment (New Step)
+  # Phase 2: Continuous Deployment
   deploy:
-    needs: build-and-push # Tells github to wait until Phase 1 finishes
+    needs: build-and-push
     runs-on: ubuntu-latest
+
     steps:
-      - name: Execute Remote SSH Commands
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare deployment directory on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            # 1. pull the fresh image you just built
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest
+            mkdir -p /home/ubuntu/deployment
 
-            # 2. Stop and remove the old container (if it exists)
-            sudo docker stop fastapi-container || true
-            sudo docker rm fastapi-container || true
+      - name: Copy deployment script to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "scripts/deploy.sh"
+          target: "/home/ubuntu/deployment/"
+          strip_components: 1
+          overwrite: true
 
-            # 3. Run the new container
-            sudo docker run -d --name fastapi-container -p 8000:8000 ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:latest
+      - name: Deploy versioned Docker image
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            chmod +x /home/ubuntu/deployment/deploy.sh
+
+            bash /home/ubuntu/deployment/deploy.sh \
+              "${{ secrets.DOCKERHUB_USERNAME }}/fastapi-cloud:${{ github.sha }}"
