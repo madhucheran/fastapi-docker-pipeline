@@ -147,7 +147,6 @@ if ! wait_for_healthy "$APP" || \
 fi
 
 # 8. Remove previous version after success
-sudo docker rm -f "$PREVIOUS" 2>/dev/null || true
 
 DEPLOYMENT_SUCCESS=true
 trap - ERR
